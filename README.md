@@ -42,13 +42,22 @@ Run the script manually:
 
 To run the script every 5 minutes, add this line to your crontab:
 ```bash
-*/5 * * * * /path/to/check_pending_runs.py >> /path/to/logfile.log 2>&1
+*/5 * * * *  /path_to_directory/.venv/bin/python /path_to_directory/main.py >> /path_to_logfile/logfile.log 2>&1
 ```
 
 To edit your crontab:
 ```bash
 crontab -e
 ```
+
+To add a cron job:
+```bash
+crontab -e
+```
+
+
+
+
 
 ## Project Structure
 
