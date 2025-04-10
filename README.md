@@ -1,10 +1,11 @@
-# Patchflow Run Checker
+# Patchflow Local Service
 
-A script that checks Supabase for pending private patchflow runs and triggers the patchflow command for each matching run.
+A service that processes pending private patchflow runs from a PostgreSQL database and executes the patchflow command for each matching run.
 
 ## Prerequisites
 
 - Python 3.12+ (as specified in pyproject.toml)
+- PostgreSQL database access
 - [uv](https://github.com/astral-sh/uv) - Fast Python package installer and virtual environment manager
 
 ## Setup
@@ -14,12 +15,17 @@ A script that checks Supabase for pending private patchflow runs and triggers th
    ```bash
    cp .env.example .env
    ```
-3. Edit `.env` and add your Supabase credentials:
+3. Edit `.env` and add your database credentials and configuration:
    ```
-   SUPABASE_URL=your_supabase_url
-   SUPABASE_ANON_KEY=your_anon_key
-   SUPABASE_USER_EMAIL=your_email
-   SUPABASE_USER_PASSWORD=your_password
+   DB_HOST=your_database_host
+   DB_NAME=your_database_name
+   DB_USER=your_database_user
+   DB_PASSWORD=your_database_password
+   DB_PORT=your_database_port
+   ORGANIZATION_ID=your_organization_id
+   PATCHWORK_EXEC=path_to_patchwork_executable
+   OUTPUT_DIR=path_to_output_directory
+   READ_ONLY=false  # Set to true for dry-run mode
    ```
 4. Install dependencies using uv:
    ```bash
@@ -28,41 +34,36 @@ A script that checks Supabase for pending private patchflow runs and triggers th
 
 5. Make the script executable:
    ```bash
-   chmod +x check_pending_runs.py
+   chmod +x main.py
    ```
 
 ## Usage
 
 Run the script manually:
 ```bash
-./check_pending_runs.py
+./main.py
 ```
 
 ### Setting up as a Cron Job
 
-To run the script every 5 minutes, add this line to your crontab:
+To run the script every minute, add this line to your crontab:
 ```bash
-*/5 * * * *  /path_to_directory/.venv/bin/python /path_to_directory/main.py >> /path_to_logfile/logfile.log 2>&1
+* * * * *  /path_to_directory/.venv/bin/python /path_to_directory/main.py >> /path_to_logfile/logfile.log 2>&1
 ```
 
-To edit your crontab:
-```bash
-crontab -e
-```
-
-To add a cron job:
-```bash
-crontab -e
-```
-
-
-
-
+The script will:
+1. Connect to the PostgreSQL database
+2. Find pending private patchflow runs for your organization
+3. For each pending run:
+   - Execute the patchflow command with the run's inputs
+   - Log the command output
+   - Update the run's status and outputs in the database
+4. Handle any errors that occur during processing
 
 ## Project Structure
 
 - `pyproject.toml`: Project configuration and dependencies
-- `check_pending_runs.py`: Main script
+- `main.py`: Main script for processing patchflow runs
 - `.env.example`: Example environment variables
 - `.gitignore`: Git ignore rules
 
@@ -70,34 +71,34 @@ crontab -e
 
 The project uses the following main dependencies (as specified in pyproject.toml):
 - python-dotenv>=1.1.0
-- supabase>=2.15.0
-
-## Authentication
-
-The script uses Supabase authentication with:
-- Anon key for initial client setup
-- Email and password for user authentication
-- The authenticated session is used to query the database
+- psycopg2>=2.9.9
+- strip-ansi>=0.1.1
 
 ## Logging
 
 The script logs:
-- Authentication status
+- Database connection status
 - When it starts processing a run
-- Success messages for each triggered run
+- Command execution details
+- Success/failure status for each run
 - Any errors that occur during processing
 
 ## Error Handling
 
 The script includes error handling for:
-- Authentication failures
-- Supabase connection issues
+- Database connection issues
 - Failed patchflow command execution
+- File I/O operations
 - General exceptions
 
 ## Environment Variables
 
-- `SUPABASE_URL`: Your Supabase project URL
-- `SUPABASE_ANON_KEY`: Your Supabase anon/public key
-- `SUPABASE_USER_EMAIL`: Email for authentication
-- `SUPABASE_USER_PASSWORD`: Password for authentication
+- `DB_HOST`: PostgreSQL database host
+- `DB_NAME`: PostgreSQL database name
+- `DB_USER`: PostgreSQL database user
+- `DB_PASSWORD`: PostgreSQL database password
+- `DB_PORT`: PostgreSQL database port (default: 5432)
+- `ORGANIZATION_ID`: Your organization ID
+- `PATCHWORK_EXEC`: Path to the patchwork executable
+- `OUTPUT_DIR`: Directory to store output files
+- `READ_ONLY`: Set to "true" for dry-run mode (default: "false")
