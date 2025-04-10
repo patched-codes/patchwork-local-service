@@ -5,6 +5,7 @@ description = "A script that checks Supabase for pending private patchflow runs 
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "psycopg2-binary>=2.9.10",
     "python-dotenv>=1.1.0",
     "strip-ansi>=0.1.1",
     "supabase>=2.15.0",

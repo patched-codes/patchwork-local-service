@@ -7,17 +7,21 @@ import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional, TypedDict, Union
 
+import psycopg2
 from dotenv import load_dotenv
+from psycopg2.extras import RealDictCursor
 from strip_ansi import strip_ansi
-from supabase import Client, create_client
 
 # Load environment variables
 load_dotenv()
 
-# Initialize Supabase client with anon key
-supabase_url = os.getenv("SUPABASE_URL")
-supabase_anon_key = os.getenv("SUPABASE_ANON_KEY")
-supabase: Client = create_client(supabase_url, supabase_anon_key)
+# Initialize Postgres connection parameters
+db_host = os.getenv("DB_HOST")
+db_name = os.getenv("DB_NAME")
+db_user = os.getenv("DB_USER")
+db_password = os.getenv("DB_PASSWORD")
+db_port = os.getenv("DB_PORT", "5432")
+organization_id = os.getenv("ORGANIZATION_ID")
 
 patchwork_exec = os.getenv("PATCHWORK_EXEC")
 
@@ -58,28 +62,46 @@ class PatchflowRun(TypedDict):
     patchflow: Patchflow
 
 
+def get_db_connection():
+    """Create and return a database connection"""
+    try:
+        conn = psycopg2.connect(host=db_host, database=db_name, user=db_user, password=db_password, port=db_port)
+        return conn
+    except Exception as e:
+        log.error(f"Database connection failed: {str(e)}")
+        raise
+
+
 def save_run(run: PatchflowRun, only: Optional[List[str]] = None):
-    update_data = {}
     if only is None:
         only = run.keys()
+
+    update_fields = []
+    update_values = []
+
     for key in only:
-        update_data[key] = run[key]
-    if read_only:
-        log.info(f"Would update run {run['id']} with {update_data}")
+        if key in run and key != "patchflow":  # Skip the patchflow object
+            update_fields.append(f"{key} = %s")
+            update_values.append(json.dumps(run[key]) if isinstance(run[key], dict) else run[key])
+
+    if not update_fields:
         return
-    supabase.table("custom_patchflow_runs").update(update_data).eq("id", run["id"]).execute()
 
+    update_query = f"UPDATE custom_patchflow_runs SET {', '.join(update_fields)} WHERE id = %s"
+    update_values.append(run["id"])
 
-def authenticate_user():
-    """Authenticate with username and password"""
+    if read_only:
+        log.info(f"Would update run {run['id']} with {update_fields}, {update_values}")
+        return
+
     try:
-        auth_response = supabase.auth.sign_in_with_password(
-            {"email": os.getenv("SUPABASE_USER_EMAIL"), "password": os.getenv("SUPABASE_USER_PASSWORD")}
-        )
-        return auth_response
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            cursor.execute(update_query, update_values)
+        conn.commit()
+        conn.close()
     except Exception as e:
-        log.error(f"Authentication failed: {str(e)}")
-        raise
+        log.error(f"Error updating run {run['id']}: {str(e)}")
 
 
 def get_logger(run: PatchflowRun):
@@ -110,8 +132,7 @@ async def run_patchflow(run: PatchflowRun):
         args = [f"{key}={run['inputs'][key]}" for key in run["inputs"].keys()]
         cmd = [
             patchwork_exec,
-            "Test",
-            # run["patchflow"]["graph"]["name"],
+            run["patchflow"]["graph"]["name"],
             "--log",
             "debug",
             "--output",
@@ -162,24 +183,44 @@ async def check_and_run_pending():
     try:
         os.makedirs(output_dir, exist_ok=True)
 
-        # Authenticate user first
-        authenticate_user()
+        # Get pending runs with is_private=true
+        conn = get_db_connection()
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute(f"""
+                SELECT r.*, p.id as p_id, p.name as p_name, p.description as p_description, p.created_at as p_created_at, p.graph as p_graph, p.is_published as p_is_published, p.is_verified as p_is_verified, p.meta as p_meta, p.organization_id as p_organization_id
+                FROM custom_patchflow_runs r
+                LEFT JOIN custom_patchflows p ON r.custom_patchflow_id = p.id
+                WHERE r.status = 'pending'
+                AND r.organization_id = {organization_id}
+                AND r.meta->>'is_private' = 'true'
+                LIMIT 10
+            """)
+            data = cursor.fetchall()
+        conn.close()
 
-        # Query for pending runs with is_private=true
-        response = (
-            supabase.table("custom_patchflow_runs")
-            .select("*, patchflow:custom_patchflows(*)")
-            .filter("status", "eq", "pending")
-            .filter("meta->is_private", "eq", "true")
-            .limit(10)
-            .execute()
-        )
-
-        if len(response.data) == 0:
+        if len(data) == 0:
             log.info("No pending runs found")
             return
 
-        runs = [PatchflowRun(datum) for datum in response.data]
+        runs = []
+        for row in data:
+            # Extract patchflow data
+            patchflow_data = {
+                "id": row.pop("p_id", None),
+                "name": row.pop("p_name", None),
+                "description": row.pop("p_description", None),
+                "created_at": row.pop("p_created_at", None),
+                "graph": row.pop("p_graph", {}),
+                "is_published": row.pop("p_is_published", False),
+                "is_verified": row.pop("p_is_verified", False),
+                "meta": row.pop("p_meta", {}),
+                "organization_id": row.pop("p_organization_id", None),
+            }
+
+            # Create run with patchflow data
+            run_data = dict(row)
+            run_data["patchflow"] = patchflow_data
+            runs.append(PatchflowRun(run_data))
 
         promises: List[asyncio.Task] = []
         # Process each pending run
@@ -196,17 +237,26 @@ async def check_and_run_pending():
         log.error(f"Error checking pending runs: {str(e)}")
 
 
-async def main_loop():
-    while True:
-        try:
-            await check_and_run_pending()
-            await asyncio.sleep(30)
-        except asyncio.CancelledError:
-            log.info("Main loop cancelled")
-            break
-
-
 def main():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(check_and_run_pending())
+    finally:
+        loop.close()
+
+
+def main_daemon():
+    async def main_loop():
+        wait_time = 30
+        while True:
+            try:
+                await check_and_run_pending()
+                await asyncio.sleep(wait_time)
+            except asyncio.CancelledError:
+                log.info("Main loop cancelled")
+                break
+
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
