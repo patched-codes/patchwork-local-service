@@ -1,12 +1,11 @@
 [project]
-name = "patchflow-run-checker"
+name = "patchflow-local-service"
 version = "0.1.0"
-description = "A script that checks Supabase for pending private patchflow runs and triggers the patchflow command"
+description = "A service that processes pending private patchflow runs from a PostgreSQL database and executes the patchflow command"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "psycopg2-binary>=2.9.10",
     "python-dotenv>=1.1.0",
     "strip-ansi>=0.1.1",
-    "supabase>=2.15.0",
 ]
