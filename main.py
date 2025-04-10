@@ -5,7 +5,7 @@ import json
 import logging
 import os
 from datetime import datetime
-from typing import Any, Dict, List, Optional, TypedDict, Union
+from typing import Any, Dict, List, Optional, TypedDict
 
 import psycopg2
 from dotenv import load_dotenv
@@ -38,26 +38,14 @@ log.handlers = [handler]
 
 
 class Patchflow(TypedDict):
-    id: int
     name: str
-    description: Optional[str]
-    created_at: str
     graph: Dict[str, Any]
-    is_published: bool
-    is_verified: bool
-    meta: Dict[str, Any]
-    organization_id: Optional[int]
 
 
 class PatchflowRun(TypedDict):
-    created_at: str
-    custom_patchflow_id: Union[int, None]
     id: int
     inputs: Dict[str, Any]
-    meta: Dict[str, Any]
-    organization_id: int
     outputs: Dict[str, Any]
-    repository_id: int
     status: str
     patchflow: Patchflow
 
@@ -187,7 +175,7 @@ async def check_and_run_pending():
         conn = get_db_connection()
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
             cursor.execute(f"""
-                SELECT r.*, p.id as p_id, p.name as p_name, p.description as p_description, p.created_at as p_created_at, p.graph as p_graph, p.is_published as p_is_published, p.is_verified as p_is_verified, p.meta as p_meta, p.organization_id as p_organization_id
+                SELECT r.*, p.name as p_name, p.graph as p_graph
                 FROM custom_patchflow_runs r
                 LEFT JOIN custom_patchflows p ON r.custom_patchflow_id = p.id
                 WHERE r.status = 'pending'
@@ -206,15 +194,8 @@ async def check_and_run_pending():
         for row in data:
             # Extract patchflow data
             patchflow_data = {
-                "id": row.pop("p_id", None),
                 "name": row.pop("p_name", None),
-                "description": row.pop("p_description", None),
-                "created_at": row.pop("p_created_at", None),
                 "graph": row.pop("p_graph", {}),
-                "is_published": row.pop("p_is_published", False),
-                "is_verified": row.pop("p_is_verified", False),
-                "meta": row.pop("p_meta", {}),
-                "organization_id": row.pop("p_organization_id", None),
             }
 
             # Create run with patchflow data
